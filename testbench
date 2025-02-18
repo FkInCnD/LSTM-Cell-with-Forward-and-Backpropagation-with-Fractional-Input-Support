@@ -1,0 +1,124 @@
+module fp_subtractor_tb;
+    // Signals
+    reg clk;
+    reg rst;
+    reg [31:0] a;
+    reg [31:0] b;
+    wire [31:0] result;
+    wire overflow;
+    wire underflow;
+
+    // Instantiate the subtractor
+    fp_subtractor dut (
+        .clk(clk),
+        .rst(rst),
+        .a(a),
+        .b(b),
+        .result(result),
+        .overflow(overflow),
+        .underflow(underflow)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+
+    // Test stimulus
+    initial begin
+        // VCD file for waveform
+        $dumpfile("fp_subtractor.vcd");
+        $dumpvars(0, fp_subtractor_tb);
+        
+        // Initialize
+        rst = 1;
+        a = 32'b0;
+        b = 32'b0;
+        #10;
+        rst = 0;
+        #10;
+
+        // Test Case 1: Simple positive numbers (3.5 - 1.25)
+        // 3.5  = 0x40600000 (IEEE 754)
+        // 1.25 = 0x3FA00000 (IEEE 754)
+        a = 32'h40600000;
+        b = 32'h3FA00000;
+        #20;
+        $display("Test 1: 3.5 - 1.25");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+        
+        // Test Case 2: Negative number subtraction (2.0 - (-3.0))
+        // 2.0  = 0x40000000
+        // -3.0 = 0xC0400000
+        a = 32'h40000000;
+        b = 32'hC0400000;
+        #20;
+        $display("Test 2: 2.0 - (-3.0)");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+
+        // Test Case 3: Zero subtraction (5.0 - 0.0)
+        // 5.0 = 0x40A00000
+        // 0.0 = 0x00000000
+        a = 32'h40A00000;
+        b = 32'h00000000;
+        #20;
+        $display("Test 3: 5.0 - 0.0");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+
+        // Test Case 4: Numbers requiring alignment
+        // 1000.0 = 0x447A0000
+        // 0.001  = 0x3A83126F
+        a = 32'h447A0000;
+        b = 32'h3A83126F;
+        #20;
+        $display("Test 4: 1000.0 - 0.001");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+
+        // Test Case 5: Underflow test (very small numbers)
+        // 1.17549e-38 - 1.17549e-38 (smallest normalized numbers)
+        a = 32'h00800000;
+        b = 32'h00800000;
+        #20;
+        $display("Test 5: Underflow test");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+        $display("Underflow flag = %b", underflow);
+
+        // Test Case 6: Overflow test (very large numbers)
+        // Try to create overflow by subtracting a negative large number
+        a = 32'h7F000000;  // Large positive number
+        b = 32'hFF000000;  // Large negative number
+        #20;
+        $display("Test 6: Overflow test");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+        $display("Overflow flag = %b", overflow);
+
+        // Test Case 7: NaN handling
+        a = 32'h7FC00000;  // NaN
+        b = 32'h40000000;  // 2.0
+        #20;
+        $display("Test 7: NaN handling");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+
+        // Test Case 8: Infinity handling
+        a = 32'h7F800000;  // Positive infinity
+        b = 32'h40000000;  // 2.0
+        #20;
+        $display("Test 8: Infinity handling");
+        $display("A = %h, B = %h, Result = %h", a, b, result);
+
+        // End simulation
+        #20;
+        $display("Simulation completed");
+        $finish;
+    end
+
+    // Monitor changes
+    always @(posedge clk) begin
+        if (overflow)
+            $display("Warning: Overflow detected at time %t", $time);
+        if (underflow)
+            $display("Warning: Underflow detected at time %t", $time);
+    end
+
+endmodule
