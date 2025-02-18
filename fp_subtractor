@@ -1,0 +1,105 @@
+module fp_subtractor (
+    input wire clk,
+    input wire rst,
+    input wire [31:0] a,  // First operand
+    input wire [31:0] b,  // Second operand
+    output reg [31:0] result,  // Result
+    output reg overflow,  // Overflow flag
+    output reg underflow // Underflow flag
+);
+
+    // Extract components of IEEE 754 numbers
+    wire sign_a = a[31];
+    wire sign_b = b[31];
+    wire [7:0] exp_a = a[30:23];
+    wire [7:0] exp_b = b[30:23];
+    wire [22:0] mant_a = a[22:0];
+    wire [22:0] mant_b = b[22:0];
+
+    // Internal registers
+    reg [24:0] aligned_mant_a;  // Including hidden bit and guard bit
+    reg [24:0] aligned_mant_b;
+    reg [7:0] larger_exp;
+    reg [7:0] exp_diff;
+    reg final_sign;
+    reg [24:0] sub_result;
+    reg [7:0] final_exp;
+    reg [22:0] final_mant;
+
+    // Main computation process
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            result <= 32'b0;
+            overflow <= 1'b0;
+            underflow <= 1'b0;
+        end else begin
+            // Step 1: Handle special cases (zero, infinity, NaN)
+            if (exp_a == 8'b0 || exp_b == 8'b0) begin
+                // Handle zero cases
+                if (exp_a == 8'b0 && exp_b == 8'b0) begin
+                    result <= 32'b0;
+                end else if (exp_a == 8'b0) begin
+                    result <= {~sign_b, exp_b, mant_b};  // Return -b
+                end else begin
+                    result <= {sign_a, exp_a, mant_a};   // Return a
+                end
+            end else if (exp_a == 8'hFF || exp_b == 8'hFF) begin
+                // Handle infinity or NaN
+                result <= 32'h7FC00000;  // Return NaN
+            end else begin
+                // Step 2: Align mantissas
+                aligned_mant_a = {2'b01, mant_a};  // Add hidden bit and guard bit
+                aligned_mant_b = {2'b01, mant_b};
+                
+                // Determine which exponent is larger
+                if (exp_a >= exp_b) begin
+                    larger_exp = exp_a;
+                    exp_diff = exp_a - exp_b;
+                    aligned_mant_b = aligned_mant_b >> exp_diff;
+                end else begin
+                    larger_exp = exp_b;
+                    exp_diff = exp_b - exp_a;
+                    aligned_mant_a = aligned_mant_a >> exp_diff;
+                end
+
+                // Step 3: Perform subtraction
+                if (sign_a ^ sign_b) begin
+                    // Different signs: add magnitudes
+                    sub_result = aligned_mant_a + aligned_mant_b;
+                    final_sign = sign_a;
+                end else begin
+                    // Same signs: subtract magnitudes
+                    if (aligned_mant_a >= aligned_mant_b) begin
+                        sub_result = aligned_mant_a - aligned_mant_b;
+                        final_sign = sign_a;
+                    end else begin
+                        sub_result = aligned_mant_b - aligned_mant_a;
+                        final_sign = ~sign_a;
+                    end
+                end
+
+                // Step 4: Normalize result
+                final_exp = larger_exp;
+                while (sub_result[24] != 1'b1 && final_exp > 0) begin
+                    sub_result = sub_result << 1;
+                    final_exp = final_exp - 1;
+                end
+
+                // Check for underflow/overflow
+                if (final_exp == 0) begin
+                    underflow <= 1'b1;
+                    result <= {final_sign, 31'b0};
+                end else if (final_exp == 8'hFF) begin
+                    overflow <= 1'b1;
+                    result <= {final_sign, 8'hFF, 23'b0};
+                end else begin
+                    // Pack final result
+                    final_mant = sub_result[23:1];  // Drop guard bit
+                    result <= {final_sign, final_exp, final_mant};
+                    overflow <= 1'b0;
+                    underflow <= 1'b0;
+                end
+            end
+        end
+    end
+endmodule
