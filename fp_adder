@@ -1,0 +1,117 @@
+module fp_adder (
+    input wire clk,
+    input wire rst,
+    input wire [31:0] a,
+    input wire [31:0] b,
+    output reg [31:0] result,
+    output reg overflow,
+    output reg underflow
+);
+
+    // Extract components of floating point numbers
+    wire sign_a = a[31];
+    wire sign_b = b[31];
+    wire [7:0] exp_a = a[30:23];
+    wire [7:0] exp_b = b[30:23];
+    wire [22:0] frac_a = a[22:0];
+    wire [22:0] frac_b = b[22:0];
+
+    // Internal registers
+    reg [24:0] aligned_frac_a, aligned_frac_b;
+    reg [7:0] larger_exp;
+    reg [7:0] exp_diff;
+    reg sign_result;
+    reg [24:0] sum_frac;
+    reg [7:0] sum_exp;
+    
+    // States for the state machine
+    localparam IDLE = 2'b00;
+    localparam ALIGN = 2'b01;
+    localparam ADD = 2'b10;
+    localparam NORMALIZE = 2'b11;
+    
+    reg [1:0] state, next_state;
+
+    // State machine
+    always @(posedge clk or posedge rst) begin
+        if (rst)
+            state <= IDLE;
+        else
+            state <= next_state;
+    end
+
+    // Next state logic and main operation
+    always @(*) begin
+        case (state)
+            IDLE: begin
+                next_state = ALIGN;
+                overflow = 0;
+                underflow = 0;
+            end
+
+            ALIGN: begin
+                // Add hidden bit '1' to fractions
+                aligned_frac_a = {1'b1, frac_a, 1'b0};
+                aligned_frac_b = {1'b1, frac_b, 1'b0};
+
+                // Determine which exponent is larger
+                if (exp_a >= exp_b) begin
+                    larger_exp = exp_a;
+                    exp_diff = exp_a - exp_b;
+                    // Right shift the smaller fraction
+                    aligned_frac_b = aligned_frac_b >> exp_diff;
+                end else begin
+                    larger_exp = exp_b;
+                    exp_diff = exp_b - exp_a;
+                    // Right shift the smaller fraction
+                    aligned_frac_a = aligned_frac_a >> exp_diff;
+                end
+                
+                next_state = ADD;
+            end
+
+            ADD: begin
+                // Determine sign and perform addition/subtraction
+                if (sign_a == sign_b) begin
+                    sign_result = sign_a;
+                    sum_frac = aligned_frac_a + aligned_frac_b;
+                end else begin
+                    if (aligned_frac_a >= aligned_frac_b) begin
+                        sign_result = sign_a;
+                        sum_frac = aligned_frac_a - aligned_frac_b;
+                    end else begin
+                        sign_result = sign_b;
+                        sum_frac = aligned_frac_b - aligned_frac_a;
+                    end
+                end
+                
+                sum_exp = larger_exp;
+                next_state = NORMALIZE;
+            end
+
+            NORMALIZE: begin
+                // Normalize the result
+                if (sum_frac[24]) begin
+                    // Overflow in fraction, need to shift right
+                    sum_frac = sum_frac >> 1;
+                    sum_exp = sum_exp + 1;
+                    if (sum_exp >= 255)
+                        overflow = 1;
+                end else begin
+                    // Find leading 1 and shift left
+                    while (!sum_frac[23] && sum_exp > 0) begin
+                        sum_frac = sum_frac << 1;
+                        sum_exp = sum_exp - 1;
+                    end
+                    if (sum_exp == 0)
+                        underflow = 1;
+                end
+
+                // Compose final result
+                result = {sign_result, sum_exp, sum_frac[22:0]};
+                next_state = IDLE;
+            end
+        endcase
+    end
+
+endmodule
