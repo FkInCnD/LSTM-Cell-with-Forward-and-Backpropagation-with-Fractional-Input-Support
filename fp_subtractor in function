@@ -1,0 +1,90 @@
+// Function to subtract two IEEE 754 single-precision floating-point numbers
+function automatic [31:0] fp_subtract;
+    input [31:0] a;
+    input [31:0] b;
+
+    // Internal variables
+    reg sign_a, sign_b, final_sign;
+    reg [7:0] exp_a, exp_b, larger_exp, exp_diff, final_exp;
+    reg [22:0] mant_a, mant_b, final_mant;
+    reg [24:0] aligned_mant_a, aligned_mant_b;  // Including hidden bit and guard bit
+    reg [24:0] sub_result;
+    
+    begin
+        // Extract components
+        sign_a = a[31];
+        sign_b = b[31];
+        exp_a = a[30:23];
+        exp_b = b[30:23];
+        mant_a = a[22:0];
+        mant_b = b[22:0];
+
+        // Handle special cases
+        if (exp_a == 8'b0 || exp_b == 8'b0) begin
+            // Handle zero cases
+            if (exp_a == 8'b0 && exp_b == 8'b0)
+                fp_subtract = 32'b0;
+            else if (exp_a == 8'b0)
+                fp_subtract = {~sign_b, exp_b, mant_b};  // Return -b
+            else
+                fp_subtract = {sign_a, exp_a, mant_a};   // Return a
+        end
+        else if (exp_a == 8'hFF || exp_b == 8'hFF) begin
+            // Handle infinity or NaN
+            fp_subtract = 32'h7FC00000;  // Return NaN
+        end
+        else begin
+            // Normal number processing
+            // Add hidden bits and prepare for alignment
+            aligned_mant_a = {2'b01, mant_a};
+            aligned_mant_b = {2'b01, mant_b};
+
+            // Align mantissas based on exponent difference
+            if (exp_a >= exp_b) begin
+                larger_exp = exp_a;
+                exp_diff = exp_a - exp_b;
+                aligned_mant_b = aligned_mant_b >> exp_diff;
+            end
+            else begin
+                larger_exp = exp_b;
+                exp_diff = exp_b - exp_a;
+                aligned_mant_a = aligned_mant_a >> exp_diff;
+            end
+
+            // Perform subtraction based on signs
+            if (sign_a ^ sign_b) begin
+                // Different signs: add magnitudes
+                sub_result = aligned_mant_a + aligned_mant_b;
+                final_sign = sign_a;
+            end
+            else begin
+                // Same signs: subtract magnitudes
+                if (aligned_mant_a >= aligned_mant_b) begin
+                    sub_result = aligned_mant_a - aligned_mant_b;
+                    final_sign = sign_a;
+                end
+                else begin
+                    sub_result = aligned_mant_b - aligned_mant_a;
+                    final_sign = ~sign_a;
+                end
+            end
+
+            // Normalize result
+            final_exp = larger_exp;
+            while (sub_result[24] != 1'b1 && sub_result != 0 && final_exp > 0) begin
+                sub_result = sub_result << 1;
+                final_exp = final_exp - 1;
+            end
+
+            // Handle special cases after normalization
+            if (sub_result == 0)
+                fp_subtract = 32'b0;
+            else if (final_exp == 0)
+                fp_subtract = {final_sign, 31'b0};  // Underflow to zero
+            else if (final_exp == 8'hFF)
+                fp_subtract = {final_sign, 8'hFF, 23'b0};  // Overflow to infinity
+            else
+                fp_subtract = {final_sign, final_exp, sub_result[23:1]};  // Normal case
+        end
+    end
+endfunction
